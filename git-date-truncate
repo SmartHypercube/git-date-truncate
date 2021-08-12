@@ -1,0 +1,86 @@
+#!/usr/bin/python3
+import argparse
+import os
+import subprocess
+import sys
+
+parser = argparse.ArgumentParser(
+    prog='git date-truncate',
+    description='Truncate dates in the latest commit and drop timezone data.',
+)
+
+parser.add_argument('--tips', action='store_true',
+    help='show useful tips')
+
+group = parser.add_mutually_exclusive_group()
+parser.set_defaults(author=None)
+group.add_argument('-a', '--author', dest='author', action='store_true',
+    help='force truncate author date')
+group.add_argument('--no-author', dest='author', action='store_false',
+    help='never truncate author date')
+
+group = parser.add_mutually_exclusive_group()
+parser.set_defaults(committer=None)
+group.add_argument('-c', '--committer', dest='committer', action='store_true',
+    help='force truncate committer date')
+group.add_argument('--no-committer', dest='committer', action='store_false',
+    help='never truncate committer date')
+
+args = parser.parse_args()
+
+old_hash, author_name, author_email, author_date, committer_name, committer_email, committer_date = subprocess.run(
+    'git show -s --date=raw --format=%h%n%an%n%ae%n%ad%n%cn%n%ce%n%cd HEAD'.split(),
+    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, encoding='utf8', check=True,
+).stdout.splitlines()
+
+if args.author is None or args.committer is None:
+    user_name = subprocess.run(
+        'git config user.name'.split(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, encoding='utf8', check=True,
+    ).stdout.strip()
+    user_email = subprocess.run(
+        'git config user.email'.split(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, encoding='utf8', check=True,
+    ).stdout.strip()
+
+    if args.author is None:
+        args.author = author_name == user_name and author_email == user_email
+
+    if args.committer is None:
+        args.committer = committer_name == user_name and committer_email == user_email
+
+author_changed = False
+if args.author:
+    t = int(author_date.split()[0])
+    t = f'{t // 86400 * 86400} +0000'
+    author_changed = t != author_date
+    author_date = t
+
+committer_changed = False
+if args.committer:
+    t = int(committer_date.split()[0])
+    t = f'{t // 86400 * 86400} +0000'
+    committer_changed = t != committer_date
+    committer_date = t
+
+if author_changed or committer_changed:
+    env = dict(os.environ)
+    env['GIT_AUTHOR_DATE'] = author_date
+    env['GIT_COMMITTER_DATE'] = committer_date
+    subprocess.run(
+        ['git', 'commit', '-q', '--amend', f'--date={author_date}', '--no-edit', '--only'],
+        env=env, check=True,
+    )
+    new_hash = subprocess.run(
+        'git show -s --format=%h HEAD'.split(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, encoding='utf8', check=True,
+    ).stdout.strip()
+
+    s = {
+        (True, False): 'author date',
+        (False, True): 'committer date',
+        (True, True): 'author date and committer date',
+    }[author_changed, committer_changed]
+    print(f'date-truncate: {old_hash} -> {new_hash} (truncated {s})')
+    if args.tips:
+        print(f'  (use "git reset {old_hash}" to undo)')
