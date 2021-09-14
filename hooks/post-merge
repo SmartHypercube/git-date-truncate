@@ -1,2 +1,6 @@
-#!/bin/sh
+#!/bin/bash
+set -e
+gitdir=$(git rev-parse --git-dir)
+mv "$gitdir"/MERGE_HEAD{,.bak}
 git date-truncate --tips
+mv "$gitdir"/MERGE_HEAD{.bak,}
